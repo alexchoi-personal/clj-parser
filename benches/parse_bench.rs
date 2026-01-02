@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use clojure_parser::parse;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
@@ -53,26 +54,54 @@ const NESTED_STRUCTURE: &str = r#"
 
 fn bench_simple_forms(c: &mut Criterion) {
     c.bench_function("parse simple forms", |b| {
-        b.iter(|| parse(black_box(SIMPLE_FORMS)))
+        b.iter(|| {
+            let bump = Bump::new();
+            let result = parse(black_box(SIMPLE_FORMS), &bump);
+            black_box(result.is_ok())
+        })
     });
 }
 
 fn bench_complex_forms(c: &mut Criterion) {
     c.bench_function("parse complex forms", |b| {
-        b.iter(|| parse(black_box(COMPLEX_FORMS)))
+        b.iter(|| {
+            let bump = Bump::new();
+            let result = parse(black_box(COMPLEX_FORMS), &bump);
+            black_box(result.is_ok())
+        })
     });
 }
 
 fn bench_nested_structure(c: &mut Criterion) {
     c.bench_function("parse nested structure", |b| {
-        b.iter(|| parse(black_box(NESTED_STRUCTURE)))
+        b.iter(|| {
+            let bump = Bump::new();
+            let result = parse(black_box(NESTED_STRUCTURE), &bump);
+            black_box(result.is_ok())
+        })
     });
 }
 
 fn bench_many_tokens(c: &mut Criterion) {
     let many_symbols: String = (0..1000).map(|i| format!("sym{} ", i)).collect();
     c.bench_function("parse 1000 symbols", |b| {
-        b.iter(|| parse(black_box(&many_symbols)))
+        b.iter(|| {
+            let bump = Bump::new();
+            let result = parse(black_box(&many_symbols), &bump);
+            black_box(result.is_ok())
+        })
+    });
+}
+
+fn bench_with_reused_bump(c: &mut Criterion) {
+    let many_symbols: String = (0..1000).map(|i| format!("sym{} ", i)).collect();
+    c.bench_function("parse 1000 symbols (reused bump)", |b| {
+        let mut bump = Bump::new();
+        b.iter(|| {
+            bump.reset();
+            let result = parse(black_box(&many_symbols), &bump);
+            black_box(result.is_ok())
+        })
     });
 }
 
@@ -81,6 +110,7 @@ criterion_group!(
     bench_simple_forms,
     bench_complex_forms,
     bench_nested_structure,
-    bench_many_tokens
+    bench_many_tokens,
+    bench_with_reused_bump
 );
 criterion_main!(benches);

@@ -10,9 +10,19 @@ categories = ["parsing", "development-tools"]
 
 [dependencies]
 thiserror = "2"
+bumpalo = { version = "3", features = ["collections"] }
+memchr = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "sync", "macros"], optional = true }
+futures = { version = "0.3", optional = true }
+
+[features]
+default = []
+async = ["tokio", "futures"]
 
 [dev-dependencies]
 criterion = "0.5"
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "sync", "macros"] }
+futures = "0.3"
 
 [[bench]]
 name = "parse_bench"

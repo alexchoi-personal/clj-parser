@@ -1,3 +1,4 @@
+use bumpalo::Bump;
 use clojure_parser::parse;
 use std::env;
 use std::fs;
@@ -44,7 +45,8 @@ fn main() {
         match fs::read_to_string(file) {
             Ok(content) => {
                 total_bytes += content.len();
-                match parse(&content) {
+                let bump = Bump::new();
+                match parse(&content, &bump) {
                     Ok(forms) => {
                         success += 1;
                         total_forms += forms.len();

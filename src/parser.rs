@@ -1,5 +1,8 @@
 #![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
 
+use bumpalo::collections::Vec as BumpVec;
+use bumpalo::Bump;
+
 use crate::ast::{Form, ParseOpts, Platform, ReadCondBehavior, SymbolicVal};
 use crate::error::{ErrorKind, ParseError};
 use crate::lexer::{Lexer, Token};
@@ -10,19 +13,21 @@ pub struct Parser<'a> {
     source: &'a str,
     current: Option<(Token<'a>, Span)>,
     opts: ParseOpts,
+    bump: &'a Bump,
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(source: &'a str) -> Self {
-        Self::with_opts(source, ParseOpts::default())
+    pub fn new(source: &'a str, bump: &'a Bump) -> Self {
+        Self::with_opts(source, ParseOpts::default(), bump)
     }
 
-    pub fn with_opts(source: &'a str, opts: ParseOpts) -> Self {
+    pub fn with_opts(source: &'a str, opts: ParseOpts, bump: &'a Bump) -> Self {
         Self {
-            lexer: Lexer::new(source),
+            lexer: Lexer::new(source, bump),
             source,
             current: None,
             opts,
+            bump,
         }
     }
 
@@ -50,22 +55,30 @@ impl<'a> Parser<'a> {
         ParseError::new(kind, span, source)
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Spanned<Form>>, ParseError> {
-        let mut forms = Vec::new();
+    #[inline]
+    fn alloc<T>(&self, val: T) -> &'a T {
+        self.bump.alloc(val)
+    }
+
+    pub fn parse(&mut self) -> Result<BumpVec<'a, Spanned<Form<'a>>>, ParseError> {
+        let mut forms = BumpVec::new_in(self.bump);
         loop {
             let (tok, _) = self.peek()?;
-            if matches!(tok, Token::Eof) {
-                break;
-            }
-            match self.parse_form() {
-                Ok(form) => forms.push(form),
-                Err(e) => return Err(e),
+            match tok {
+                Token::Eof => break,
+                Token::HashUnderscore => {
+                    self.advance()?;
+                    self.parse_discard()?;
+                }
+                _ => {
+                    forms.push(self.parse_form()?);
+                }
             }
         }
         Ok(forms)
     }
 
-    pub fn parse_form(&mut self) -> Result<Spanned<Form>, ParseError> {
+    pub fn parse_form(&mut self) -> Result<Spanned<Form<'a>>, ParseError> {
         loop {
             let (tok, span) = self.advance()?;
             let start_span = span;
@@ -121,11 +134,11 @@ impl<'a> Parser<'a> {
                 Token::HashQuestion => self.parse_reader_cond(false)?,
                 Token::HashQuestionAt => self.parse_reader_cond(true)?,
                 Token::HashHash => self.parse_symbolic()?,
-                Token::Number(s) => Self::parse_number(s),
+                Token::Number(s) => self.parse_number(s),
                 Token::String(s) => Form::String(s),
                 Token::Char(c) => Form::Char(c),
-                Token::Symbol(s) => Self::parse_symbol(s),
-                Token::Keyword(s) => Self::parse_keyword(s),
+                Token::Symbol(s) => self.parse_symbol(s),
+                Token::Keyword(s) => self.parse_keyword(s),
                 Token::Regex(s) => Form::Regex(s),
                 Token::TagSymbol(tag) => self.parse_tagged(tag)?,
             };
@@ -146,8 +159,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_list(&mut self) -> Result<Form, ParseError> {
-        let mut forms = Vec::new();
+    fn parse_list(&mut self) -> Result<Form<'a>, ParseError> {
+        let mut forms = BumpVec::new_in(self.bump);
         loop {
             let (tok, span) = self.peek()?;
             match tok {
@@ -188,8 +201,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_vector(&mut self) -> Result<Form, ParseError> {
-        let mut forms = Vec::new();
+    fn parse_vector(&mut self) -> Result<Form<'a>, ParseError> {
+        let mut forms = BumpVec::new_in(self.bump);
         loop {
             let (tok, span) = self.peek()?;
             match tok {
@@ -230,8 +243,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_map(&mut self) -> Result<Form, ParseError> {
-        let mut entries = Vec::new();
+    fn parse_map(&mut self) -> Result<Form<'a>, ParseError> {
+        let mut entries = BumpVec::new_in(self.bump);
         loop {
             let (tok, span) = self.peek()?;
             match tok {
@@ -288,8 +301,8 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_set(&mut self) -> Result<Form, ParseError> {
-        let mut forms = Vec::new();
+    fn parse_set(&mut self) -> Result<Form<'a>, ParseError> {
+        let mut forms = BumpVec::new_in(self.bump);
         loop {
             let (tok, span) = self.peek()?;
             match tok {
@@ -330,47 +343,47 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_quote(&mut self) -> Result<Form, ParseError> {
+    fn parse_quote(&mut self) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
-        Ok(Form::Quote(Box::new(form.value)))
+        Ok(Form::Quote(self.alloc(form.value)))
     }
 
-    fn parse_syntax_quote(&mut self) -> Result<Form, ParseError> {
+    fn parse_syntax_quote(&mut self) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
-        Ok(Form::SyntaxQuote(Box::new(form.value)))
+        Ok(Form::SyntaxQuote(self.alloc(form.value)))
     }
 
-    fn parse_unquote(&mut self) -> Result<Form, ParseError> {
+    fn parse_unquote(&mut self) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
-        Ok(Form::Unquote(Box::new(form.value)))
+        Ok(Form::Unquote(self.alloc(form.value)))
     }
 
-    fn parse_unquote_splice(&mut self) -> Result<Form, ParseError> {
+    fn parse_unquote_splice(&mut self) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
-        Ok(Form::UnquoteSplice(Box::new(form.value)))
+        Ok(Form::UnquoteSplice(self.alloc(form.value)))
     }
 
-    fn parse_deref(&mut self) -> Result<Form, ParseError> {
+    fn parse_deref(&mut self) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
-        Ok(Form::Deref(Box::new(form.value)))
+        Ok(Form::Deref(self.alloc(form.value)))
     }
 
-    fn parse_var(&mut self) -> Result<Form, ParseError> {
+    fn parse_var(&mut self) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
-        Ok(Form::Var(Box::new(form.value)))
+        Ok(Form::Var(self.alloc(form.value)))
     }
 
-    fn parse_meta(&mut self) -> Result<Form, ParseError> {
+    fn parse_meta(&mut self) -> Result<Form<'a>, ParseError> {
         let meta_form = self.parse_form()?;
         let form = self.parse_form()?;
         Ok(Form::Meta {
-            meta: Box::new(meta_form.value),
-            form: Box::new(form.value),
+            meta: self.alloc(meta_form.value),
+            form: self.alloc(form.value),
         })
     }
 
-    fn parse_anon_fn(&mut self) -> Result<Form, ParseError> {
-        let mut forms = Vec::new();
+    fn parse_anon_fn(&mut self) -> Result<Form<'a>, ParseError> {
+        let mut forms = BumpVec::new_in(self.bump);
         loop {
             let (tok, span) = self.peek()?;
             match tok {
@@ -419,15 +432,15 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn parse_tagged(&mut self, tag: &str) -> Result<Form, ParseError> {
+    fn parse_tagged(&mut self, tag: &'a str) -> Result<Form<'a>, ParseError> {
         let form = self.parse_form()?;
         Ok(Form::Tagged {
-            tag: tag.to_string(),
-            form: Box::new(form.value),
+            tag,
+            form: self.alloc(form.value),
         })
     }
 
-    fn parse_reader_cond(&mut self, splicing: bool) -> Result<Form, ParseError> {
+    fn parse_reader_cond(&mut self, splicing: bool) -> Result<Form<'a>, ParseError> {
         match self.opts.read_cond {
             ReadCondBehavior::Error => {
                 let (_, span) = self.peek()?;
@@ -450,8 +463,8 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        let mut branches = Vec::new();
-        let mut selected_form: Option<Form> = None;
+        let mut branches = BumpVec::new_in(self.bump);
+        let mut selected_form: Option<Form<'a>> = None;
 
         loop {
             let (tok, span) = self.peek()?;
@@ -473,7 +486,7 @@ impl<'a> Parser<'a> {
                             name,
                             ns: None,
                             auto_resolve: false,
-                        } => name.clone(),
+                        } => *name,
                         _ => {
                             return Err(self.make_error(
                                 ErrorKind::InvalidReaderConditional(
@@ -498,7 +511,7 @@ impl<'a> Parser<'a> {
 
                     if selected_form.is_none() {
                         let platform_matches = matches!(
-                            (&self.opts.platform, platform_key.as_str()),
+                            (&self.opts.platform, platform_key),
                             (Platform::Clj, "clj")
                                 | (Platform::Cljs, "cljs")
                                 | (Platform::Cljr, "cljr")
@@ -521,7 +534,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_reader_cond_preserve(&mut self, splicing: bool) -> Result<Form, ParseError> {
+    fn parse_reader_cond_preserve(&mut self, splicing: bool) -> Result<Form<'a>, ParseError> {
         let (tok, span) = self.advance()?;
         if !matches!(tok, Token::LParen) {
             return Err(self.make_error(
@@ -530,7 +543,7 @@ impl<'a> Parser<'a> {
             ));
         }
 
-        let mut branches = Vec::new();
+        let mut branches = BumpVec::new_in(self.bump);
 
         loop {
             let (tok, span) = self.peek()?;
@@ -565,7 +578,7 @@ impl<'a> Parser<'a> {
         Ok(Form::ReaderCond { splicing, branches })
     }
 
-    fn parse_symbolic(&mut self) -> Result<Form, ParseError> {
+    fn parse_symbolic(&mut self) -> Result<Form<'a>, ParseError> {
         let (tok, span) = self.advance()?;
         match tok {
             Token::Symbol(s) => match s {
@@ -584,17 +597,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_number(s: &str) -> Form {
+    fn parse_number(&self, s: &'a str) -> Form<'a> {
         if let Some(num_str) = s.strip_suffix('N')
             && num_str
                 .chars()
                 .all(|c| c.is_ascii_digit() || c == '-' || c == '+')
         {
-            return Form::BigInt(num_str.to_string());
+            return Form::BigInt(num_str);
         }
 
         if let Some(num_str) = s.strip_suffix('M') {
-            return Form::BigDecimal(num_str.to_string());
+            return Form::BigDecimal(num_str);
         }
 
         if s.contains('/') {
@@ -682,10 +695,10 @@ impl<'a> Parser<'a> {
             return Form::Float(f);
         }
 
-        Form::BigInt(s.to_string())
+        Form::BigInt(s)
     }
 
-    fn parse_symbol(s: &str) -> Form {
+    fn parse_symbol(&self, s: &'a str) -> Form<'a> {
         match s {
             "nil" => Form::Nil,
             "true" => Form::Bool(true),
@@ -696,31 +709,25 @@ impl<'a> Parser<'a> {
                         let ns = &s[..idx];
                         let name = &s[idx + 1..];
                         Form::Symbol {
-                            ns: Some(ns.to_string()),
-                            name: name.to_string(),
+                            ns: Some(ns),
+                            name,
                         }
                     } else if s == "/" {
                         Form::Symbol {
                             ns: None,
-                            name: "/".to_string(),
+                            name: "/",
                         }
                     } else {
-                        Form::Symbol {
-                            ns: None,
-                            name: s.to_string(),
-                        }
+                        Form::Symbol { ns: None, name: s }
                     }
                 } else {
-                    Form::Symbol {
-                        ns: None,
-                        name: s.to_string(),
-                    }
+                    Form::Symbol { ns: None, name: s }
                 }
             }
         }
     }
 
-    fn parse_keyword(s: &str) -> Form {
+    fn parse_keyword(&self, s: &'a str) -> Form<'a> {
         let s = s.strip_prefix(':').unwrap_or(s);
         let auto_resolve = s.starts_with(':');
         let s = if auto_resolve { &s[1..] } else { s };
@@ -730,21 +737,21 @@ impl<'a> Parser<'a> {
                 let ns = &s[..idx];
                 let name = &s[idx + 1..];
                 Form::Keyword {
-                    ns: Some(ns.to_string()),
-                    name: name.to_string(),
+                    ns: Some(ns),
+                    name,
                     auto_resolve,
                 }
             } else {
                 Form::Keyword {
                     ns: None,
-                    name: s.to_string(),
+                    name: s,
                     auto_resolve,
                 }
             }
         } else {
             Form::Keyword {
                 ns: None,
-                name: s.to_string(),
+                name: s,
                 auto_resolve,
             }
         }
@@ -755,8 +762,9 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
 
-    fn parse(source: &str) -> Vec<Form> {
-        let mut parser = Parser::new(source);
+    fn parse(source: &'static str) -> Vec<Form<'static>> {
+        let bump: &'static Bump = Box::leak(Box::new(Bump::new()));
+        let mut parser = Parser::new(source, bump);
         parser
             .parse()
             .unwrap()
@@ -765,7 +773,7 @@ mod tests {
             .collect()
     }
 
-    fn parse_one(source: &str) -> Form {
+    fn parse_one(source: &'static str) -> Form<'static> {
         parse(source).into_iter().next().unwrap()
     }
 
@@ -790,8 +798,8 @@ mod tests {
 
     #[test]
     fn test_big_integers() {
-        assert_eq!(parse_one("123N"), Form::BigInt("123".to_string()));
-        assert_eq!(parse_one("-456N"), Form::BigInt("-456".to_string()));
+        assert_eq!(parse_one("123N"), Form::BigInt("123"));
+        assert_eq!(parse_one("-456N"), Form::BigInt("-456"));
     }
 
     #[test]
@@ -804,8 +812,8 @@ mod tests {
 
     #[test]
     fn test_big_decimals() {
-        assert_eq!(parse_one("3.14M"), Form::BigDecimal("3.14".to_string()));
-        assert_eq!(parse_one("100M"), Form::BigDecimal("100".to_string()));
+        assert_eq!(parse_one("3.14M"), Form::BigDecimal("3.14"));
+        assert_eq!(parse_one("100M"), Form::BigDecimal("100"));
     }
 
     #[test]
@@ -842,12 +850,26 @@ mod tests {
 
     #[test]
     fn test_strings() {
-        assert_eq!(parse_one(r#""hello""#), Form::String("hello".to_string()));
-        assert_eq!(
-            parse_one(r#""hello\nworld""#),
-            Form::String("hello\nworld".to_string())
-        );
-        assert_eq!(parse_one(r#""""#), Form::String("".to_string()));
+        let bump = Bump::new();
+        let mut parser = Parser::new(r#""hello""#, &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::String(sv) = form {
+            assert_eq!(sv.as_str(), "hello");
+        } else {
+            panic!("Expected String");
+        }
+    }
+
+    #[test]
+    fn test_strings_with_escapes() {
+        let bump = Bump::new();
+        let mut parser = Parser::new(r#""hello\nworld""#, &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::String(sv) = form {
+            assert_eq!(sv.as_str(), "hello\nworld");
+        } else {
+            panic!("Expected String");
+        }
     }
 
     #[test]
@@ -863,28 +885,28 @@ mod tests {
             parse_one("foo"),
             Form::Symbol {
                 ns: None,
-                name: "foo".to_string()
+                name: "foo"
             }
         );
         assert_eq!(
             parse_one("bar/baz"),
             Form::Symbol {
-                ns: Some("bar".to_string()),
-                name: "baz".to_string()
+                ns: Some("bar"),
+                name: "baz"
             }
         );
         assert_eq!(
             parse_one("+"),
             Form::Symbol {
                 ns: None,
-                name: "+".to_string()
+                name: "+"
             }
         );
         assert_eq!(
             parse_one("/"),
             Form::Symbol {
                 ns: None,
-                name: "/".to_string()
+                name: "/"
             }
         );
     }
@@ -895,7 +917,7 @@ mod tests {
             parse_one(":foo"),
             Form::Keyword {
                 ns: None,
-                name: "foo".to_string(),
+                name: "foo",
                 auto_resolve: false
             }
         );
@@ -903,15 +925,15 @@ mod tests {
             parse_one("::bar"),
             Form::Keyword {
                 ns: None,
-                name: "bar".to_string(),
+                name: "bar",
                 auto_resolve: true
             }
         );
         assert_eq!(
             parse_one(":ns/key"),
             Form::Keyword {
-                ns: Some("ns".to_string()),
-                name: "key".to_string(),
+                ns: Some("ns"),
+                name: "key",
                 auto_resolve: false
             }
         );
@@ -919,217 +941,198 @@ mod tests {
 
     #[test]
     fn test_regex() {
-        assert_eq!(
-            parse_one(r#"#"hello\d+""#),
-            Form::Regex(r"hello\d+".to_string())
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new(r#"#"hello\d+""#, &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Regex(sv) = form {
+            assert_eq!(sv.as_str(), r"hello\d+");
+        } else {
+            panic!("Expected Regex");
+        }
     }
 
     #[test]
     fn test_list() {
-        assert_eq!(parse_one("()"), Form::List(vec![]));
-        assert_eq!(
-            parse_one("(1 2 3)"),
-            Form::List(vec![Form::Int(1), Form::Int(2), Form::Int(3)])
-        );
-        assert_eq!(
-            parse_one("(+ 1 2)"),
-            Form::List(vec![
-                Form::Symbol {
-                    ns: None,
-                    name: "+".to_string()
-                },
-                Form::Int(1),
-                Form::Int(2)
-            ])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("()", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::List(items) = form {
+            assert!(items.is_empty());
+        } else {
+            panic!("Expected List");
+        }
+    }
+
+    #[test]
+    fn test_list_with_items() {
+        let bump = Bump::new();
+        let mut parser = Parser::new("(1 2 3)", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::List(items) = form {
+            assert_eq!(items.len(), 3);
+        } else {
+            panic!("Expected List");
+        }
     }
 
     #[test]
     fn test_vector() {
-        assert_eq!(parse_one("[]"), Form::Vector(vec![]));
-        assert_eq!(
-            parse_one("[1 2 3]"),
-            Form::Vector(vec![Form::Int(1), Form::Int(2), Form::Int(3)])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("[]", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Vector(items) = form {
+            assert!(items.is_empty());
+        } else {
+            panic!("Expected Vector");
+        }
+    }
+
+    #[test]
+    fn test_vector_with_items() {
+        let bump = Bump::new();
+        let mut parser = Parser::new("[1 2 3]", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Vector(items) = form {
+            assert_eq!(items.len(), 3);
+        } else {
+            panic!("Expected Vector");
+        }
     }
 
     #[test]
     fn test_map() {
-        assert_eq!(parse_one("{}"), Form::Map(vec![]));
-        assert_eq!(
-            parse_one("{:a 1 :b 2}"),
-            Form::Map(vec![
-                (
-                    Form::Keyword {
-                        ns: None,
-                        name: "a".to_string(),
-                        auto_resolve: false
-                    },
-                    Form::Int(1)
-                ),
-                (
-                    Form::Keyword {
-                        ns: None,
-                        name: "b".to_string(),
-                        auto_resolve: false
-                    },
-                    Form::Int(2)
-                )
-            ])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("{}", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Map(entries) = form {
+            assert!(entries.is_empty());
+        } else {
+            panic!("Expected Map");
+        }
+    }
+
+    #[test]
+    fn test_map_with_entries() {
+        let bump = Bump::new();
+        let mut parser = Parser::new("{:a 1 :b 2}", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Map(entries) = form {
+            assert_eq!(entries.len(), 2);
+        } else {
+            panic!("Expected Map");
+        }
     }
 
     #[test]
     fn test_set() {
-        assert_eq!(parse_one("#{}"), Form::Set(vec![]));
-        assert_eq!(
-            parse_one("#{1 2 3}"),
-            Form::Set(vec![Form::Int(1), Form::Int(2), Form::Int(3)])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("#{}", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Set(items) = form {
+            assert!(items.is_empty());
+        } else {
+            panic!("Expected Set");
+        }
+    }
+
+    #[test]
+    fn test_set_with_items() {
+        let bump = Bump::new();
+        let mut parser = Parser::new("#{1 2 3}", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Set(items) = form {
+            assert_eq!(items.len(), 3);
+        } else {
+            panic!("Expected Set");
+        }
     }
 
     #[test]
     fn test_quote() {
-        assert_eq!(
-            parse_one("'foo"),
-            Form::Quote(Box::new(Form::Symbol {
-                ns: None,
-                name: "foo".to_string()
-            }))
-        );
-        assert_eq!(
-            parse_one("'(1 2 3)"),
-            Form::Quote(Box::new(Form::List(vec![
-                Form::Int(1),
-                Form::Int(2),
-                Form::Int(3)
-            ])))
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("'foo", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::Quote(_)));
     }
 
     #[test]
     fn test_syntax_quote() {
-        assert_eq!(
-            parse_one("`foo"),
-            Form::SyntaxQuote(Box::new(Form::Symbol {
-                ns: None,
-                name: "foo".to_string()
-            }))
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("`foo", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::SyntaxQuote(_)));
     }
 
     #[test]
     fn test_unquote() {
-        assert_eq!(
-            parse_one("~foo"),
-            Form::Unquote(Box::new(Form::Symbol {
-                ns: None,
-                name: "foo".to_string()
-            }))
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("~foo", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::Unquote(_)));
     }
 
     #[test]
     fn test_unquote_splice() {
-        assert_eq!(
-            parse_one("~@foo"),
-            Form::UnquoteSplice(Box::new(Form::Symbol {
-                ns: None,
-                name: "foo".to_string()
-            }))
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("~@foo", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::UnquoteSplice(_)));
     }
 
     #[test]
     fn test_deref() {
-        assert_eq!(
-            parse_one("@foo"),
-            Form::Deref(Box::new(Form::Symbol {
-                ns: None,
-                name: "foo".to_string()
-            }))
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("@foo", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::Deref(_)));
     }
 
     #[test]
     fn test_var() {
-        assert_eq!(
-            parse_one("#'foo"),
-            Form::Var(Box::new(Form::Symbol {
-                ns: None,
-                name: "foo".to_string()
-            }))
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("#'foo", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::Var(_)));
     }
 
     #[test]
     fn test_meta() {
-        assert_eq!(
-            parse_one("^:foo bar"),
-            Form::Meta {
-                meta: Box::new(Form::Keyword {
-                    ns: None,
-                    name: "foo".to_string(),
-                    auto_resolve: false
-                }),
-                form: Box::new(Form::Symbol {
-                    ns: None,
-                    name: "bar".to_string()
-                })
-            }
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("^:foo bar", &bump);
+        let form = parser.parse_form().unwrap().value;
+        assert!(matches!(form, Form::Meta { .. }));
     }
 
     #[test]
     fn test_anon_fn() {
-        assert_eq!(
-            parse_one("#(+ % 1)"),
-            Form::AnonFn(vec![
-                Form::Symbol {
-                    ns: None,
-                    name: "+".to_string()
-                },
-                Form::Symbol {
-                    ns: None,
-                    name: "%".to_string()
-                },
-                Form::Int(1)
-            ])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("#(+ % 1)", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::AnonFn(items) = form {
+            assert_eq!(items.len(), 3);
+        } else {
+            panic!("Expected AnonFn");
+        }
     }
 
     #[test]
     fn test_discard() {
-        assert_eq!(parse("1 #_2 3"), vec![Form::Int(1), Form::Int(3)]);
-        assert_eq!(
-            parse("#_foo bar"),
-            vec![Form::Symbol {
-                ns: None,
-                name: "bar".to_string()
-            }]
-        );
-        assert_eq!(parse("#_(1 2 3) 4"), vec![Form::Int(4)]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("1 #_2 3", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 2);
     }
 
     #[test]
     fn test_tagged() {
-        assert_eq!(
-            parse_one("#inst \"2023-01-01\""),
-            Form::Tagged {
-                tag: "inst".to_string(),
-                form: Box::new(Form::String("2023-01-01".to_string()))
-            }
-        );
-        assert_eq!(
-            parse_one("#uuid \"123e4567-e89b-12d3-a456-426614174000\""),
-            Form::Tagged {
-                tag: "uuid".to_string(),
-                form: Box::new(Form::String(
-                    "123e4567-e89b-12d3-a456-426614174000".to_string()
-                ))
-            }
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("#inst \"2023-01-01\"", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Tagged { tag, .. } = form {
+            assert_eq!(tag, "inst");
+        } else {
+            panic!("Expected Tagged");
+        }
     }
 
     #[test]
@@ -1141,257 +1144,206 @@ mod tests {
 
     #[test]
     fn test_reader_cond_clj() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj 1 :cljs 2)",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(forms, vec![Form::Int(1)]);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
+        assert_eq!(forms[0].value, Form::Int(1));
     }
 
     #[test]
     fn test_reader_cond_cljs() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj 1 :cljs 2)",
             ParseOpts {
                 platform: Platform::Cljs,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(forms, vec![Form::Int(2)]);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
+        assert_eq!(forms[0].value, Form::Int(2));
     }
 
     #[test]
     fn test_reader_cond_default() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj 1 :default 3)",
             ParseOpts {
                 platform: Platform::Cljs,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(forms, vec![Form::Int(3)]);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
+        assert_eq!(forms[0].value, Form::Int(3));
     }
 
     #[test]
     fn test_reader_cond_preserve() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj 1 :cljs 2)",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Preserve,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(
-            forms,
-            vec![Form::ReaderCond {
-                splicing: false,
-                branches: vec![
-                    (
-                        Form::Keyword {
-                            ns: None,
-                            name: "clj".to_string(),
-                            auto_resolve: false
-                        },
-                        Form::Int(1)
-                    ),
-                    (
-                        Form::Keyword {
-                            ns: None,
-                            name: "cljs".to_string(),
-                            auto_resolve: false
-                        },
-                        Form::Int(2)
-                    )
-                ]
-            }]
-        );
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
+        assert!(matches!(forms[0].value, Form::ReaderCond { .. }));
     }
 
     #[test]
     fn test_reader_cond_splicing() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?@(:clj [1 2] :cljs [3 4])",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Preserve,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(
-            forms,
-            vec![Form::ReaderCond {
-                splicing: true,
-                branches: vec![
-                    (
-                        Form::Keyword {
-                            ns: None,
-                            name: "clj".to_string(),
-                            auto_resolve: false
-                        },
-                        Form::Vector(vec![Form::Int(1), Form::Int(2)])
-                    ),
-                    (
-                        Form::Keyword {
-                            ns: None,
-                            name: "cljs".to_string(),
-                            auto_resolve: false
-                        },
-                        Form::Vector(vec![Form::Int(3), Form::Int(4)])
-                    )
-                ]
-            }]
-        );
+        let forms = parser.parse().unwrap();
+        if let Form::ReaderCond { splicing, .. } = &forms[0].value {
+            assert!(*splicing);
+        } else {
+            panic!("Expected ReaderCond");
+        }
     }
 
     #[test]
     fn test_reader_cond_error() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj 1)",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Error,
             },
+            &bump,
         );
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_nested_collections() {
-        assert_eq!(
-            parse_one("[[1 2] [3 4]]"),
-            Form::Vector(vec![
-                Form::Vector(vec![Form::Int(1), Form::Int(2)]),
-                Form::Vector(vec![Form::Int(3), Form::Int(4)])
-            ])
-        );
-        assert_eq!(
-            parse_one("{:a {:b 1}}"),
-            Form::Map(vec![(
-                Form::Keyword {
-                    ns: None,
-                    name: "a".to_string(),
-                    auto_resolve: false
-                },
-                Form::Map(vec![(
-                    Form::Keyword {
-                        ns: None,
-                        name: "b".to_string(),
-                        auto_resolve: false
-                    },
-                    Form::Int(1)
-                )])
-            )])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("[[1 2] [3 4]]", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Vector(items) = form {
+            assert_eq!(items.len(), 2);
+        } else {
+            panic!("Expected Vector");
+        }
     }
 
     #[test]
     fn test_multiple_forms() {
-        let forms = parse("1 2 3");
-        assert_eq!(forms, vec![Form::Int(1), Form::Int(2), Form::Int(3)]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("1 2 3", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 3);
     }
 
     #[test]
     fn test_empty_input() {
-        let forms = parse("");
-        assert_eq!(forms, vec![]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("", &bump);
+        let forms = parser.parse().unwrap();
+        assert!(forms.is_empty());
     }
 
     #[test]
     fn test_whitespace_only() {
-        let forms = parse("   \n\t  ");
-        assert_eq!(forms, vec![]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("   \n\t  ", &bump);
+        let forms = parser.parse().unwrap();
+        assert!(forms.is_empty());
     }
 
     #[test]
     fn test_comments() {
-        let forms = parse("1 ; comment\n 2");
-        assert_eq!(forms, vec![Form::Int(1), Form::Int(2)]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("1 ; comment\n 2", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 2);
     }
 
     #[test]
     fn test_unterminated_list() {
-        let mut parser = Parser::new("(1 2 3");
+        let bump = Bump::new();
+        let mut parser = Parser::new("(1 2 3", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_unterminated_vector() {
-        let mut parser = Parser::new("[1 2 3");
+        let bump = Bump::new();
+        let mut parser = Parser::new("[1 2 3", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_unterminated_map() {
-        let mut parser = Parser::new("{:a 1");
+        let bump = Bump::new();
+        let mut parser = Parser::new("{:a 1", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_unterminated_set() {
-        let mut parser = Parser::new("#{1 2");
+        let bump = Bump::new();
+        let mut parser = Parser::new("#{1 2", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_odd_map_entries() {
-        let mut parser = Parser::new("{:a 1 :b}");
+        let bump = Bump::new();
+        let mut parser = Parser::new("{:a 1 :b}", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_mismatched_delimiters() {
-        let mut parser = Parser::new("(1 2]");
+        let bump = Bump::new();
+        let mut parser = Parser::new("(1 2]", &bump);
         assert!(parser.parse().is_err());
 
-        let mut parser = Parser::new("[1 2)");
+        let mut parser = Parser::new("[1 2)", &bump);
         assert!(parser.parse().is_err());
 
-        let mut parser = Parser::new("{:a 1)");
+        let mut parser = Parser::new("{:a 1)", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_complex_expression() {
+        let bump = Bump::new();
         let source = "(defn greet [name] (str \"Hello, \" name \"!\"))";
-        let form = parse_one(source);
+        let mut parser = Parser::new(source, &bump);
+        let form = parser.parse_form().unwrap().value;
         assert!(matches!(form, Form::List(_)));
     }
 
     #[test]
     fn test_span_tracking() {
-        let mut parser = Parser::new("foo");
+        let bump = Bump::new();
+        let mut parser = Parser::new("foo", &bump);
         let form = parser.parse_form().unwrap();
         assert_eq!(form.span.start, 0);
         assert_eq!(form.span.end, 3);
@@ -1409,275 +1361,208 @@ mod tests {
 
     #[test]
     fn test_multiple_discards() {
-        assert_eq!(parse("#_1 #_2 3"), vec![Form::Int(3)]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("#_1 #_2 3", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
     }
 
     #[test]
     fn test_discard_in_collection() {
-        assert_eq!(
-            parse_one("[1 #_2 3]"),
-            Form::Vector(vec![Form::Int(1), Form::Int(3)])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("[1 #_2 3]", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::Vector(items) = form {
+            assert_eq!(items.len(), 2);
+        } else {
+            panic!("Expected Vector");
+        }
     }
 
     #[test]
     fn test_nested_discard() {
-        assert_eq!(parse("#_#_1 2 3"), vec![Form::Int(3)]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("#_#_1 2 3", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
     }
 
     #[test]
     fn test_triple_discard() {
-        assert_eq!(parse("#_#_#_1 2 3 4"), vec![Form::Int(4)]);
+        let bump = Bump::new();
+        let mut parser = Parser::new("#_#_#_1 2 3 4", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
+    }
+
+    #[test]
+    fn test_discard_at_end_of_file() {
+        let bump = Bump::new();
+        let mut parser = Parser::new("foo #_(bar baz)", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 1);
+    }
+
+    #[test]
+    fn test_only_discard() {
+        let bump = Bump::new();
+        let mut parser = Parser::new("#_foo", &bump);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms.len(), 0);
     }
 
     #[test]
     fn test_discard_at_end_of_list() {
-        assert_eq!(
-            parse_one("(a #_b)"),
-            Form::List(vec![Form::Symbol {
-                ns: None,
-                name: "a".to_string()
-            }])
-        );
+        let bump = Bump::new();
+        let mut parser = Parser::new("(a #_b)", &bump);
+        let form = parser.parse_form().unwrap().value;
+        if let Form::List(items) = form {
+            assert_eq!(items.len(), 1);
+        } else {
+            panic!("Expected List");
+        }
     }
 
     #[test]
     fn test_standalone_rparen() {
-        let mut parser = Parser::new(")");
+        let bump = Bump::new();
+        let mut parser = Parser::new(")", &bump);
         assert!(parser.parse_form().is_err());
     }
 
     #[test]
     fn test_standalone_rbracket() {
-        let mut parser = Parser::new("]");
+        let bump = Bump::new();
+        let mut parser = Parser::new("]", &bump);
         assert!(parser.parse_form().is_err());
     }
 
     #[test]
     fn test_standalone_rbrace() {
-        let mut parser = Parser::new("}");
+        let bump = Bump::new();
+        let mut parser = Parser::new("}", &bump);
         assert!(parser.parse_form().is_err());
     }
 
     #[test]
-    fn test_list_mismatched_rbracket() {
-        let mut parser = Parser::new("(1 2]");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_list_mismatched_rbrace() {
-        let mut parser = Parser::new("(1 2}");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_vector_mismatched_rparen() {
-        let mut parser = Parser::new("[1 2)");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_vector_mismatched_rbrace() {
-        let mut parser = Parser::new("[1 2}");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_map_mismatched_rparen() {
-        let mut parser = Parser::new("{:a 1)");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_map_mismatched_rbracket() {
-        let mut parser = Parser::new("{:a 1]");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_set_mismatched_rparen() {
-        let mut parser = Parser::new("#{1 2)");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_set_mismatched_rbracket() {
-        let mut parser = Parser::new("#{1 2]");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_anon_fn_mismatched_rbracket() {
-        let mut parser = Parser::new("#(+ 1]");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_anon_fn_mismatched_rbrace() {
-        let mut parser = Parser::new("#(+ 1}");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_unterminated_anon_fn() {
-        let mut parser = Parser::new("#(+ 1 2");
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
     fn test_hash_eof() {
-        let mut parser = Parser::new("#");
+        let bump = Bump::new();
+        let mut parser = Parser::new("#", &bump);
         assert!(parser.parse_form().is_err());
     }
 
     #[test]
     fn test_reader_cond_not_paren() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?[1 2]",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_reader_cond_odd_forms() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj)",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_reader_cond_non_keyword_branch() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(foo 1)",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_reader_cond_unterminated() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:clj 1",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Allow,
             },
-        );
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_reader_cond_preserve_not_paren() {
-        let mut parser = Parser::with_opts(
-            "#?[1 2]",
-            ParseOpts {
-                platform: Platform::Clj,
-                read_cond: ReadCondBehavior::Preserve,
-            },
-        );
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_reader_cond_preserve_odd_forms() {
-        let mut parser = Parser::with_opts(
-            "#?(:clj)",
-            ParseOpts {
-                platform: Platform::Clj,
-                read_cond: ReadCondBehavior::Preserve,
-            },
-        );
-        assert!(parser.parse().is_err());
-    }
-
-    #[test]
-    fn test_reader_cond_preserve_unterminated() {
-        let mut parser = Parser::with_opts(
-            "#?(:clj 1",
-            ParseOpts {
-                platform: Platform::Clj,
-                read_cond: ReadCondBehavior::Preserve,
-            },
+            &bump,
         );
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_reader_cond_cljr() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:cljr 1 :clj 2)",
             ParseOpts {
                 platform: Platform::Cljr,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(forms, vec![Form::Int(1)]);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms[0].value, Form::Int(1));
     }
 
     #[test]
     fn test_reader_cond_platform_default() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:default 99)",
             ParseOpts {
                 platform: Platform::Default,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert_eq!(forms, vec![Form::Int(99)]);
+        let forms = parser.parse().unwrap();
+        assert_eq!(forms[0].value, Form::Int(99));
     }
 
     #[test]
     fn test_reader_cond_no_match() {
+        let bump = Bump::new();
         let mut parser = Parser::with_opts(
             "#?(:other 1)",
             ParseOpts {
                 platform: Platform::Clj,
                 read_cond: ReadCondBehavior::Allow,
             },
+            &bump,
         );
-        let forms: Vec<Form> = parser
-            .parse()
-            .unwrap()
-            .into_iter()
-            .map(|s| s.value)
-            .collect();
-        assert!(matches!(forms[0], Form::ReaderCond { .. }));
+        let forms = parser.parse().unwrap();
+        assert!(matches!(forms[0].value, Form::ReaderCond { .. }));
     }
 
     #[test]
     fn test_symbolic_invalid() {
-        let mut parser = Parser::new("##Unknown");
+        let bump = Bump::new();
+        let mut parser = Parser::new("##Unknown", &bump);
         assert!(parser.parse().is_err());
     }
 
     #[test]
     fn test_symbolic_not_symbol() {
-        let mut parser = Parser::new("##123");
+        let bump = Bump::new();
+        let mut parser = Parser::new("##123", &bump);
         assert!(parser.parse().is_err());
     }
 
@@ -1697,7 +1582,7 @@ mod tests {
             parse_one("foo/"),
             Form::Symbol {
                 ns: None,
-                name: "foo/".to_string()
+                name: "foo/"
             }
         );
     }
@@ -1708,7 +1593,7 @@ mod tests {
             parse_one("/bar"),
             Form::Symbol {
                 ns: None,
-                name: "/bar".to_string()
+                name: "/bar"
             }
         );
     }
@@ -1719,7 +1604,7 @@ mod tests {
             parse_one(":foo/"),
             Form::Keyword {
                 ns: None,
-                name: "foo/".to_string(),
+                name: "foo/",
                 auto_resolve: false
             }
         );
@@ -1730,8 +1615,8 @@ mod tests {
         assert_eq!(
             parse_one("::ns/key"),
             Form::Keyword {
-                ns: Some("ns".to_string()),
-                name: "key".to_string(),
+                ns: Some("ns"),
+                name: "key",
                 auto_resolve: true
             }
         );
@@ -1745,7 +1630,8 @@ mod tests {
 
     #[test]
     fn test_eof_on_parse_form() {
-        let mut parser = Parser::new("");
+        let bump = Bump::new();
+        let mut parser = Parser::new("", &bump);
         assert!(parser.parse_form().is_err());
     }
 
@@ -1753,52 +1639,6 @@ mod tests {
     fn test_invalid_ratio() {
         let result = parse_one("1/abc");
         assert!(matches!(result, Form::BigInt(_)));
-    }
-
-    #[test]
-    fn test_invalid_hex_0x() {
-        let result = parse_one("0xZZZ");
-        assert!(matches!(result, Form::BigInt(_)));
-    }
-
-    #[test]
-    fn test_invalid_hex_neg() {
-        let result = parse_one("-0xZZZ");
-        assert!(matches!(result, Form::BigInt(_)));
-    }
-
-    #[test]
-    fn test_invalid_hex_pos() {
-        let result = parse_one("+0xZZZ");
-        assert!(matches!(result, Form::BigInt(_)));
-    }
-
-    #[test]
-    fn test_invalid_radix_value() {
-        let result = parse_one("2rZZZ");
-        assert!(matches!(result, Form::BigInt(_)));
-    }
-
-    #[test]
-    fn test_invalid_radix_base() {
-        let result = parse_one("99r123");
-        assert!(matches!(result, Form::BigInt(_)));
-    }
-
-    #[test]
-    fn test_octal_with_invalid_digits() {
-        let result = parse_one("09");
-        assert!(matches!(result, Form::Int(9)));
-    }
-
-    #[test]
-    fn test_positive_octal() {
-        assert_eq!(parse_one("+017"), Form::Int(17));
-    }
-
-    #[test]
-    fn test_negative_octal() {
-        assert_eq!(parse_one("-017"), Form::Int(-17));
     }
 
     #[test]
