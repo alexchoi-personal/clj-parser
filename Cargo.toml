@@ -3,8 +3,9 @@ name = "clojure-parser"
 version = "0.1.0"
 edition = "2024"
 description = "A full Clojure/ClojureScript parser in Rust"
-license = "MIT"
-repository = "https://github.com/yourusername/clojure-parser"
+license = "MIT OR Apache-2.0"
+authors = ["Alex Choi"]
+repository = "https://github.com/alexchoi-personal/clj-parser"
 keywords = ["clojure", "parser", "ast", "edn"]
 categories = ["parsing", "development-tools"]
 
