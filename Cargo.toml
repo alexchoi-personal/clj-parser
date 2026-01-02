@@ -1,0 +1,26 @@
+[package]
+name = "clojure-parser"
+version = "0.1.0"
+edition = "2024"
+description = "A full Clojure/ClojureScript parser in Rust"
+license = "MIT"
+repository = "https://github.com/yourusername/clojure-parser"
+keywords = ["clojure", "parser", "ast", "edn"]
+categories = ["parsing", "development-tools"]
+
+[dependencies]
+thiserror = "2"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "parse_bench"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
