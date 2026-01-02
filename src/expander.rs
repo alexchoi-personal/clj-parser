@@ -131,8 +131,37 @@ impl<'a> Expander<'a> {
             Form::Map(pairs) => self.expand_map(pairs),
             Form::Set(items) => self.expand_set(items),
             Form::SyntaxQuote(inner) => {
-                let expanded = self.expand_syntax_quote_inner(inner)?;
-                Ok(self.make_quote(expanded))
+                // Nested syntax-quote: first expand inner, then apply syntax-quote to the result
+                // ``foo → `(quote foo) → (seq (concat (list (quote quote)) (list (quote foo))))
+                let inner_expanded = self.expand_syntax_quote_inner(inner)?;
+                self.expand_syntax_quote_inner(&inner_expanded)
+            }
+            Form::Quote(inner) => {
+                // 'foo inside `... becomes (seq (concat (list (quote quote)) (list (quote foo))))
+                let mut items = BumpVec::new_in(self.bump);
+                items.push(Form::Symbol {
+                    ns: None,
+                    name: "quote",
+                });
+                items.push((*inner).clone());
+                self.expand_list(&items)
+            }
+            Form::Deref(inner) => {
+                // @foo inside `... becomes (seq (concat (list (quote deref)) (list (quote foo))))
+                let mut items = BumpVec::new_in(self.bump);
+                items.push(Form::Symbol {
+                    ns: None,
+                    name: "deref",
+                });
+                items.push((*inner).clone());
+                self.expand_list(&items)
+            }
+            Form::Var(inner) => {
+                // #'foo inside `... becomes (seq (concat (list (quote var)) (list (quote foo))))
+                let mut items = BumpVec::new_in(self.bump);
+                items.push(Form::Symbol { ns: None, name: "var" });
+                items.push((*inner).clone());
+                self.expand_list(&items)
             }
             _ => Ok(self.make_quote(form.clone())),
         }
