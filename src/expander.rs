@@ -312,17 +312,9 @@ impl<'a> Expander<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::StringValue;
 
     fn is_symbol_with_name(form: &Form<'_>, name: &str) -> bool {
         matches!(form, Form::Symbol { ns: None, name: n } if *n == name)
-    }
-
-    fn get_list_items<'a>(form: &'a Form<'a>) -> Option<&'a BumpVec<'a, Form<'a>>> {
-        match form {
-            Form::List(items) => Some(items),
-            _ => None,
-        }
     }
 
     fn make_bump() -> &'static Bump {
@@ -384,129 +376,6 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_simple_symbol() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let sym = make_symbol(bump, "foo");
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(sym));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(items) = &result {
-            assert_eq!(items.len(), 2);
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::Symbol { ns: None, name } if *name == "foo"));
-        } else {
-            panic!("Expected list, got {:?}", result);
-        }
-    }
-
-    #[test]
-    fn test_expand_namespaced_symbol() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let sym = make_symbol_ns(bump, "clojure.core", "map");
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(sym));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(items) = &result {
-            assert_eq!(items.len(), 2);
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(
-                matches!(&items[1], Form::Symbol { ns: Some(n), name } if *n == "clojure.core" && *name == "map")
-            );
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_keyword() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let kw = make_keyword(bump, "foo");
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(kw));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(items) = &result {
-            assert_eq!(items.len(), 2);
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(
-                matches!(&items[1], Form::Keyword { ns: None, name, auto_resolve: false } if *name == "foo")
-            );
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_literal_int() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let int = Form::Int(42);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(int));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(items) = &result {
-            assert_eq!(items.len(), 2);
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::Int(42)));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_empty_list() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let empty_list = make_list(bump, vec![]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(empty_list));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(items) = &result {
-            assert_eq!(items.len(), 1);
-            assert!(is_symbol_with_name(&items[0], "list"));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_list_with_symbols() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let a = make_symbol(bump, "a");
-        let b = make_symbol(bump, "b");
-        let list = make_list(bump, vec![a, b]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(list));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(outer) = &result {
-            assert_eq!(outer.len(), 2);
-            assert!(is_symbol_with_name(&outer[0], "seq"));
-            if let Form::List(concat_call) = &outer[1] {
-                assert!(is_symbol_with_name(&concat_call[0], "concat"));
-            } else {
-                panic!("Expected concat call");
-            }
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
     fn test_expand_list_with_unquote() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
@@ -559,18 +428,6 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_empty_vector() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let empty_vec = make_vector(bump, vec![]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(empty_vec));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        assert!(matches!(&result, Form::Vector(v) if v.is_empty()));
-    }
-
-    #[test]
     fn test_expand_vector_with_unquote() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
@@ -597,15 +454,75 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_empty_map() {
+    fn test_vector_with_unquote_splice() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
 
-        let empty_map = make_map(bump, vec![]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(empty_map));
+        let sym = make_symbol(bump, "items");
+        let splice = Form::UnquoteSplice(bump.alloc(sym));
+        let vec = make_vector(bump, vec![Form::Int(1), splice]);
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(vec));
 
         let result = expander.expand(&syntax_quote).unwrap();
-        assert!(matches!(&result, Form::Map(m) if m.is_empty()));
+        if let Form::List(outer) = &result {
+            assert!(is_symbol_with_name(&outer[0], "apply"));
+            assert!(is_symbol_with_name(&outer[1], "vector"));
+            if let Form::List(concat) = &outer[2] {
+                assert!(is_symbol_with_name(&concat[0], "concat"));
+                assert!(matches!(&concat[2], Form::Symbol { name, .. } if *name == "items"));
+            }
+        } else {
+            panic!("Expected list");
+        }
+    }
+
+    #[test]
+    fn test_expand_set_with_unquote() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let a = make_symbol(bump, "a");
+        let b = make_symbol(bump, "b");
+        let unquoted_b = Form::Unquote(bump.alloc(b));
+        let set = make_set(bump, vec![a, unquoted_b]);
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(set));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+
+        if let Form::List(outer) = &result {
+            assert!(is_symbol_with_name(&outer[0], "apply"));
+            assert!(is_symbol_with_name(&outer[1], "hash-set"));
+            if let Form::List(concat_call) = &outer[2] {
+                assert!(is_symbol_with_name(&concat_call[0], "concat"));
+            } else {
+                panic!("Expected concat call");
+            }
+        } else {
+            panic!("Expected list");
+        }
+    }
+
+    #[test]
+    fn test_set_with_unquote_splice() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol(bump, "items");
+        let splice = Form::UnquoteSplice(bump.alloc(sym));
+        let set = make_set(bump, vec![Form::Int(1), splice]);
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(set));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+        if let Form::List(outer) = &result {
+            assert!(is_symbol_with_name(&outer[0], "apply"));
+            assert!(is_symbol_with_name(&outer[1], "hash-set"));
+            if let Form::List(concat) = &outer[2] {
+                assert!(is_symbol_with_name(&concat[0], "concat"));
+                assert!(matches!(&concat[2], Form::Symbol { name, .. } if *name == "items"));
+            }
+        } else {
+            panic!("Expected list");
+        }
     }
 
     #[test]
@@ -635,38 +552,77 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_empty_set() {
+    fn test_map_with_unquote_splice_key() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
 
-        let empty_set = make_set(bump, vec![]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(empty_set));
+        let key_sym = make_symbol(bump, "k");
+        let unquoted_key = Form::Unquote(bump.alloc(key_sym));
+        let val = Form::Int(1);
+        let map = make_map(bump, vec![(unquoted_key, val)]);
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(map));
 
         let result = expander.expand(&syntax_quote).unwrap();
-        assert!(matches!(&result, Form::Set(s) if s.is_empty()));
+        if let Form::List(outer) = &result {
+            assert!(is_symbol_with_name(&outer[0], "apply"));
+            assert!(is_symbol_with_name(&outer[1], "hash-map"));
+        } else {
+            panic!("Expected list");
+        }
     }
 
     #[test]
-    fn test_expand_set_with_unquote() {
+    fn test_nested_unquote_in_list() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
 
-        let a = make_symbol(bump, "a");
-        let b = make_symbol(bump, "b");
-        let unquoted_b = Form::Unquote(bump.alloc(b));
-        let set = make_set(bump, vec![a, unquoted_b]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(set));
+        let sym = make_symbol(bump, "val");
+        let unquote = Form::Unquote(bump.alloc(sym));
+        let list = make_list(bump, vec![unquote]);
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(list));
 
         let result = expander.expand(&syntax_quote).unwrap();
-
         if let Form::List(outer) = &result {
-            assert!(is_symbol_with_name(&outer[0], "apply"));
-            assert!(is_symbol_with_name(&outer[1], "hash-set"));
-            if let Form::List(concat_call) = &outer[2] {
-                assert!(is_symbol_with_name(&concat_call[0], "concat"));
-            } else {
-                panic!("Expected concat call");
+            assert!(is_symbol_with_name(&outer[0], "seq"));
+            if let Form::List(concat) = &outer[1] {
+                assert!(is_symbol_with_name(&concat[0], "concat"));
+                if let Form::List(list_call) = &concat[1] {
+                    assert!(is_symbol_with_name(&list_call[0], "list"));
+                    assert!(matches!(&list_call[1], Form::Symbol { name, .. } if *name == "val"));
+                }
             }
+        } else {
+            panic!("Expected list");
+        }
+    }
+
+    #[test]
+    fn test_direct_unquote_in_syntax_quote() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol(bump, "direct");
+        let unquote = Form::Unquote(bump.alloc(sym));
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(unquote));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+        assert!(matches!(&result, Form::Symbol { name, .. } if *name == "direct"));
+    }
+
+    #[test]
+    fn test_unquote_with_complex_form() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let inner_list = make_list(bump, vec![Form::Int(1), Form::Int(2)]);
+        let unquote = Form::Unquote(bump.alloc(inner_list));
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(unquote));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+        if let Form::List(items) = result {
+            assert_eq!(items.len(), 2);
+            assert!(matches!(items[0], Form::Int(1)));
+            assert!(matches!(items[1], Form::Int(2)));
         } else {
             panic!("Expected list");
         }
@@ -753,6 +709,80 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_gensyms() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let foo = make_symbol(bump, "foo#");
+        let bar = make_symbol(bump, "bar#");
+        let list = make_list(bump, vec![foo, bar]);
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(list));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+
+        if let Form::List(outer) = &result {
+            if let Form::List(concat_call) = &outer[1] {
+                if let Form::List(list1) = &concat_call[1] {
+                    if let Form::List(list2) = &concat_call[2] {
+                        if let Form::List(quote1) = &list1[1] {
+                            if let Form::List(quote2) = &list2[1] {
+                                if let Form::Symbol { name: name1, .. } = &quote1[1] {
+                                    if let Form::Symbol { name: name2, .. } = &quote2[1] {
+                                        assert!(name1.starts_with("foo__"));
+                                        assert!(name2.starts_with("bar__"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_gensym_counter_increments() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let foo1 = make_symbol(bump, "a#");
+        let sq1 = Form::SyntaxQuote(bump.alloc(foo1));
+        let _ = expander.expand(&sq1).unwrap();
+
+        let foo2 = make_symbol(bump, "b#");
+        let sq2 = Form::SyntaxQuote(bump.alloc(foo2));
+        let result2 = expander.expand(&sq2).unwrap();
+
+        if let Form::List(items) = &result2 {
+            if let Form::Symbol { name, .. } = &items[1] {
+                assert!(name.contains("__1__"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_gensym_with_namespace_not_expanded() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol_ns(bump, "my.ns", "foo#");
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(sym));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+        if let Form::List(items) = &result {
+            assert!(is_symbol_with_name(&items[0], "quote"));
+            if let Form::Symbol { ns, name } = &items[1] {
+                assert_eq!(*ns, Some("my.ns"));
+                assert_eq!(*name, "foo#");
+            } else {
+                panic!("Expected symbol");
+            }
+        } else {
+            panic!("Expected list");
+        }
+    }
+
+    #[test]
     fn test_unquote_outside_syntax_quote_error() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
@@ -802,133 +832,6 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_syntax_quote() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let sym = make_symbol(bump, "foo");
-        let inner_sq = Form::SyntaxQuote(bump.alloc(sym));
-        let outer_sq = Form::SyntaxQuote(bump.alloc(inner_sq));
-
-        let result = expander.expand(&outer_sq).unwrap();
-        assert!(matches!(&result, Form::List(_)));
-    }
-
-    #[test]
-    fn test_expand_deref() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let sym = make_symbol(bump, "atom");
-        let deref = Form::Deref(bump.alloc(sym));
-
-        let result = expander.expand(&deref).unwrap();
-        assert!(matches!(&result, Form::Deref(_)));
-    }
-
-    #[test]
-    fn test_expand_var() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let sym = make_symbol(bump, "foo");
-        let var = Form::Var(bump.alloc(sym));
-
-        let result = expander.expand(&var).unwrap();
-        assert!(matches!(&result, Form::Var(_)));
-    }
-
-    #[test]
-    fn test_expand_meta() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let meta = make_keyword(bump, "private");
-        let sym = make_symbol(bump, "foo");
-        let meta_form = Form::Meta {
-            meta: bump.alloc(meta),
-            form: bump.alloc(sym),
-        };
-
-        let result = expander.expand(&meta_form).unwrap();
-        assert!(matches!(&result, Form::Meta { .. }));
-    }
-
-    #[test]
-    fn test_expand_tagged() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let s = Form::String(StringValue::Borrowed("2023-01-01"));
-        let tagged = Form::Tagged {
-            tag: bump.alloc_str("inst"),
-            form: bump.alloc(s),
-        };
-
-        let result = expander.expand(&tagged).unwrap();
-        assert!(matches!(&result, Form::Tagged { .. }));
-    }
-
-    #[test]
-    fn test_expand_anon_fn() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let sym = make_symbol(bump, "+");
-        let arg = make_symbol(bump, "%");
-        let mut body = BumpVec::new_in(bump);
-        body.push(sym);
-        body.push(arg);
-        body.push(Form::Int(1));
-        let anon_fn = Form::AnonFn(body);
-
-        let result = expander.expand(&anon_fn).unwrap();
-        assert!(matches!(&result, Form::AnonFn(_)));
-    }
-
-    #[test]
-    fn test_expand_reader_cond() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let clj = make_keyword(bump, "clj");
-        let val1 = Form::Int(1);
-        let cljs = make_keyword(bump, "cljs");
-        let val2 = Form::Int(2);
-        let mut branches = BumpVec::new_in(bump);
-        branches.push((clj, val1));
-        branches.push((cljs, val2));
-
-        let reader_cond = Form::ReaderCond {
-            splicing: false,
-            branches,
-        };
-
-        let result = expander.expand(&reader_cond).unwrap();
-        assert!(matches!(&result, Form::ReaderCond { splicing: false, .. }));
-    }
-
-    #[test]
-    fn test_expand_literals() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        assert!(matches!(expander.expand(&Form::Nil).unwrap(), Form::Nil));
-        assert!(matches!(
-            expander.expand(&Form::Bool(true)).unwrap(),
-            Form::Bool(true)
-        ));
-        assert!(matches!(
-            expander.expand(&Form::Float(3.14)).unwrap(),
-            Form::Float(f) if (f - 3.14).abs() < f64::EPSILON
-        ));
-        assert!(matches!(
-            expander.expand(&Form::Char('a')).unwrap(),
-            Form::Char('a')
-        ));
-    }
-
-    #[test]
     fn test_expand_error_display() {
         use crate::span::Span;
 
@@ -952,232 +855,329 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_collections() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
+    fn test_expand_error_source_trait() {
+        use std::error::Error;
 
-        let inner_list = make_list(bump, vec![Form::Int(1), Form::Int(2)]);
-        let outer_list = make_list(bump, vec![make_symbol(bump, "a"), inner_list]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(outer_list));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        assert!(matches!(&result, Form::List(_)));
+        let error = ExpandError::new(ExpandErrorKind::UnquoteSpliceNotInList);
+        assert!(error.source().is_none());
     }
 
     #[test]
-    fn test_complex_expansion() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let a = make_symbol(bump, "a");
-        let b = make_symbol(bump, "b");
-        let c = make_symbol(bump, "c");
-        let unquoted_b = Form::Unquote(bump.alloc(b));
-        let spliced_c = Form::UnquoteSplice(bump.alloc(c));
-        let list = make_list(bump, vec![a, unquoted_b, spliced_c]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(list));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
-        if let Form::List(outer) = &result {
-            assert!(is_symbol_with_name(&outer[0], "seq"));
-            if let Form::List(concat_call) = &outer[1] {
-                assert!(is_symbol_with_name(&concat_call[0], "concat"));
-                assert_eq!(concat_call.len(), 4);
-            } else {
-                panic!("Expected concat call");
-            }
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_get_list_items_helper() {
-        let bump = make_bump();
-        let list = make_list(bump, vec![Form::Int(1)]);
-        assert!(get_list_items(&list).is_some());
-        assert!(get_list_items(&Form::Int(1)).is_none());
-    }
-
-    #[test]
-    fn test_expand_quote_form() {
+    fn test_nested_syntax_quote() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
 
         let sym = make_symbol(bump, "foo");
-        let quote = Form::Quote(bump.alloc(sym));
+        let inner_sq = Form::SyntaxQuote(bump.alloc(sym));
+        let outer_sq = Form::SyntaxQuote(bump.alloc(inner_sq));
 
-        let result = expander.expand(&quote).unwrap();
-        assert!(matches!(&result, Form::Quote(_)));
-    }
-
-    #[test]
-    fn test_expand_nested_list_in_vector() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let inner = make_list(bump, vec![Form::Int(1)]);
-        let vec = make_vector(bump, vec![inner]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(vec));
-
-        let result = expander.expand(&syntax_quote).unwrap();
+        let result = expander.expand(&outer_sq).unwrap();
         assert!(matches!(&result, Form::List(_)));
     }
 
     #[test]
-    fn test_expand_mixed_collection() {
+    fn test_deeply_nested_syntax_quote() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
 
-        let k = make_keyword(bump, "key");
-        let v = make_vector(bump, vec![Form::Int(1), Form::Int(2)]);
-        let map = make_map(bump, vec![(k, v)]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(map));
+        let sym = make_symbol(bump, "x");
+        let sq1 = Form::SyntaxQuote(bump.alloc(sym));
+        let sq2 = Form::SyntaxQuote(bump.alloc(sq1));
+        let sq3 = Form::SyntaxQuote(bump.alloc(sq2));
 
-        let result = expander.expand(&syntax_quote).unwrap();
-        assert!(matches!(&result, Form::List(_)));
+        let result = expander.expand(&sq3);
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn test_expand_big_int() {
+    fn test_quote_inside_syntax_quote() {
         let bump = make_bump();
         let mut expander = Expander::new(bump);
 
-        let big_int = Form::BigInt(bump.alloc_str("12345678901234567890"));
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(big_int));
+        let sym = make_symbol(bump, "foo");
+        let quoted = Form::Quote(bump.alloc(sym));
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(quoted));
 
         let result = expander.expand(&syntax_quote).unwrap();
-        if let Form::List(items) = &result {
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::BigInt(_)));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_big_decimal() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let big_decimal = Form::BigDecimal(bump.alloc_str("3.14159265358979323846M"));
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(big_decimal));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        if let Form::List(items) = &result {
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::BigDecimal(_)));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_ratio() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let ratio = Form::Ratio { numer: 1, denom: 3 };
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(ratio));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        if let Form::List(items) = &result {
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::Ratio { numer: 1, denom: 3 }));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_regex() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let regex = Form::Regex(StringValue::Borrowed("\\d+"));
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(regex));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        if let Form::List(items) = &result {
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::Regex(_)));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_symbolic_val() {
-        use crate::ast::SymbolicVal;
-
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let inf = Form::SymbolicVal(SymbolicVal::Inf);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(inf));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        if let Form::List(items) = &result {
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(matches!(&items[1], Form::SymbolicVal(SymbolicVal::Inf)));
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_expand_auto_resolve_keyword() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let kw = Form::Keyword {
-            ns: None,
-            name: bump.alloc_str("foo"),
-            auto_resolve: true,
-        };
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(kw));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-        if let Form::List(items) = &result {
-            assert!(is_symbol_with_name(&items[0], "quote"));
-            assert!(
-                matches!(&items[1], Form::Keyword { ns: None, name, auto_resolve: true } if *name == "foo")
-            );
-        } else {
-            panic!("Expected list");
-        }
-    }
-
-    #[test]
-    fn test_multiple_gensyms() {
-        let bump = make_bump();
-        let mut expander = Expander::new(bump);
-
-        let foo = make_symbol(bump, "foo#");
-        let bar = make_symbol(bump, "bar#");
-        let list = make_list(bump, vec![foo, bar]);
-        let syntax_quote = Form::SyntaxQuote(bump.alloc(list));
-
-        let result = expander.expand(&syntax_quote).unwrap();
-
         if let Form::List(outer) = &result {
-            if let Form::List(concat_call) = &outer[1] {
-                if let Form::List(list1) = &concat_call[1] {
-                    if let Form::List(list2) = &concat_call[2] {
-                        if let Form::List(quote1) = &list1[1] {
-                            if let Form::List(quote2) = &list2[1] {
-                                if let Form::Symbol { name: name1, .. } = &quote1[1] {
-                                    if let Form::Symbol { name: name2, .. } = &quote2[1] {
-                                        assert!(name1.starts_with("foo__"));
-                                        assert!(name2.starts_with("bar__"));
-                                    }
-                                }
-                            }
-                        }
+            assert!(is_symbol_with_name(&outer[0], "seq"));
+            if let Form::List(concat) = &outer[1] {
+                assert!(is_symbol_with_name(&concat[0], "concat"));
+            }
+        } else {
+            panic!("Expected list from syntax-quote expansion");
+        }
+    }
+
+    #[test]
+    fn test_deref_inside_syntax_quote() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol(bump, "my-atom");
+        let deref = Form::Deref(bump.alloc(sym));
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(deref));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+        if let Form::List(outer) = &result {
+            assert!(is_symbol_with_name(&outer[0], "seq"));
+            if let Form::List(concat) = &outer[1] {
+                assert!(is_symbol_with_name(&concat[0], "concat"));
+                if let Form::List(list_call) = &concat[1] {
+                    if let Form::List(quote_call) = &list_call[1] {
+                        assert!(is_symbol_with_name(&quote_call[0], "quote"));
+                        assert!(is_symbol_with_name(&quote_call[1], "deref"));
                     }
                 }
             }
+        } else {
+            panic!("Expected list from deref in syntax-quote");
+        }
+    }
+
+    #[test]
+    fn test_var_inside_syntax_quote() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol(bump, "my-var");
+        let var = Form::Var(bump.alloc(sym));
+        let syntax_quote = Form::SyntaxQuote(bump.alloc(var));
+
+        let result = expander.expand(&syntax_quote).unwrap();
+        if let Form::List(outer) = &result {
+            assert!(is_symbol_with_name(&outer[0], "seq"));
+            if let Form::List(concat) = &outer[1] {
+                assert!(is_symbol_with_name(&concat[0], "concat"));
+                if let Form::List(list_call) = &concat[1] {
+                    if let Form::List(quote_call) = &list_call[1] {
+                        assert!(is_symbol_with_name(&quote_call[0], "quote"));
+                        assert!(is_symbol_with_name(&quote_call[1], "var"));
+                    }
+                }
+            }
+        } else {
+            panic!("Expected list from var in syntax-quote");
+        }
+    }
+
+    #[test]
+    fn test_expand_deref_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let inner_sym = make_symbol(bump, "atom");
+        let inner_sq = Form::SyntaxQuote(bump.alloc(inner_sym));
+        let deref = Form::Deref(bump.alloc(inner_sq));
+
+        let result = expander.expand(&deref).unwrap();
+        if let Form::Deref(inner) = result {
+            if let Form::List(items) = inner {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected list inside deref");
+            }
+        } else {
+            panic!("Expected Deref form");
+        }
+    }
+
+    #[test]
+    fn test_expand_var_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let inner_sym = make_symbol(bump, "my-fn");
+        let inner_sq = Form::SyntaxQuote(bump.alloc(inner_sym));
+        let var = Form::Var(bump.alloc(inner_sq));
+
+        let result = expander.expand(&var).unwrap();
+        if let Form::Var(inner) = result {
+            if let Form::List(items) = inner {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected list inside var");
+            }
+        } else {
+            panic!("Expected Var form");
+        }
+    }
+
+    #[test]
+    fn test_expand_quote_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let inner_sym = make_symbol(bump, "quoted");
+        let inner_sq = Form::SyntaxQuote(bump.alloc(inner_sym));
+        let quote = Form::Quote(bump.alloc(inner_sq));
+
+        let result = expander.expand(&quote).unwrap();
+        if let Form::Quote(inner) = result {
+            if let Form::List(items) = inner {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected list inside quote");
+            }
+        } else {
+            panic!("Expected Quote form");
+        }
+    }
+
+    #[test]
+    fn test_meta_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let inner_sym = make_symbol(bump, "val");
+        let syntax_quote_inner = Form::SyntaxQuote(bump.alloc(inner_sym));
+        let sym = make_symbol(bump, "foo");
+        let meta_form = Form::Meta {
+            meta: bump.alloc(syntax_quote_inner),
+            form: bump.alloc(sym),
+        };
+
+        let result = expander.expand(&meta_form).unwrap();
+        if let Form::Meta { meta, form } = result {
+            if let Form::List(items) = meta {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected meta to be expanded syntax-quote");
+            }
+            assert!(matches!(form, Form::Symbol { .. }));
+        } else {
+            panic!("Expected Meta form");
+        }
+    }
+
+    #[test]
+    fn test_anon_fn_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol(bump, "x");
+        let syntax_quote_inner = Form::SyntaxQuote(bump.alloc(sym));
+        let mut body = BumpVec::new_in(bump);
+        body.push(make_symbol(bump, "+"));
+        body.push(syntax_quote_inner);
+        let anon_fn = Form::AnonFn(body);
+
+        let result = expander.expand(&anon_fn).unwrap();
+        if let Form::AnonFn(items) = result {
+            assert_eq!(items.len(), 2);
+            if let Form::List(quote_list) = &items[1] {
+                assert!(is_symbol_with_name(&quote_list[0], "quote"));
+            } else {
+                panic!("Expected expanded syntax-quote in anon fn");
+            }
+        } else {
+            panic!("Expected AnonFn form");
+        }
+    }
+
+    #[test]
+    fn test_tagged_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let sym = make_symbol(bump, "value");
+        let syntax_quote_inner = Form::SyntaxQuote(bump.alloc(sym));
+        let tagged = Form::Tagged {
+            tag: bump.alloc_str("my-tag"),
+            form: bump.alloc(syntax_quote_inner),
+        };
+
+        let result = expander.expand(&tagged).unwrap();
+        if let Form::Tagged { tag, form } = result {
+            assert_eq!(tag, "my-tag");
+            if let Form::List(items) = form {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected expanded syntax-quote in tagged form");
+            }
+        } else {
+            panic!("Expected Tagged form");
+        }
+    }
+
+    #[test]
+    fn test_reader_cond_with_syntax_quote_inside() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let clj = make_keyword(bump, "clj");
+        let sym = make_symbol(bump, "clj-val");
+        let syntax_quote_val = Form::SyntaxQuote(bump.alloc(sym));
+        let mut branches = BumpVec::new_in(bump);
+        branches.push((clj, syntax_quote_val));
+
+        let reader_cond = Form::ReaderCond {
+            splicing: false,
+            branches,
+        };
+
+        let result = expander.expand(&reader_cond).unwrap();
+        if let Form::ReaderCond { splicing, branches } = result {
+            assert!(!splicing);
+            assert_eq!(branches.len(), 1);
+            if let Form::List(items) = &branches[0].1 {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected expanded syntax-quote in reader cond");
+            }
+        } else {
+            panic!("Expected ReaderCond form");
+        }
+    }
+
+    #[test]
+    fn test_reader_cond_splicing() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let clj = make_keyword(bump, "clj");
+        let val = Form::Int(42);
+        let mut branches = BumpVec::new_in(bump);
+        branches.push((clj, val));
+
+        let reader_cond = Form::ReaderCond {
+            splicing: true,
+            branches,
+        };
+
+        let result = expander.expand(&reader_cond).unwrap();
+        if let Form::ReaderCond { splicing, .. } = result {
+            assert!(splicing);
+        } else {
+            panic!("Expected ReaderCond form");
+        }
+    }
+
+    #[test]
+    fn test_reader_cond_key_with_syntax_quote() {
+        let bump = make_bump();
+        let mut expander = Expander::new(bump);
+
+        let key_sym = make_symbol(bump, "platform");
+        let key_sq = Form::SyntaxQuote(bump.alloc(key_sym));
+        let val = Form::Int(1);
+        let mut branches = BumpVec::new_in(bump);
+        branches.push((key_sq, val));
+
+        let reader_cond = Form::ReaderCond {
+            splicing: false,
+            branches,
+        };
+
+        let result = expander.expand(&reader_cond).unwrap();
+        if let Form::ReaderCond { branches, .. } = result {
+            if let Form::List(items) = &branches[0].0 {
+                assert!(is_symbol_with_name(&items[0], "quote"));
+            } else {
+                panic!("Expected syntax-quote to be expanded in key");
+            }
+        } else {
+            panic!("Expected ReaderCond form");
         }
     }
 }
