@@ -25,6 +25,9 @@ async = ["tokio", "futures"]
 criterion = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "fs", "sync", "macros"] }
 futures = "0.3"
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
 
 [[bench]]
 name = "parse_bench"

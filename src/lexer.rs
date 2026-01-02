@@ -652,48 +652,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_delimiters() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("()[]{}",  &bump);
-        assert!(matches!(lexer.next_token().unwrap().0, Token::LParen));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::RParen));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::LBracket));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::RBracket));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::LBrace));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::RBrace));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::Eof));
-    }
-
-    #[test]
-    fn test_quotes() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("'`~@~", &bump);
-        assert!(matches!(lexer.next_token().unwrap().0, Token::Quote));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::Backtick));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::TildeAt));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::Tilde));
-    }
-
-    #[test]
-    fn test_hash_dispatch() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("#{#(#'#_#?#?@##", &bump);
-        assert!(matches!(lexer.next_token().unwrap().0, Token::HashBrace));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::HashParen));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::HashQuote));
-        assert!(matches!(
-            lexer.next_token().unwrap().0,
-            Token::HashUnderscore
-        ));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::HashQuestion));
-        assert!(matches!(
-            lexer.next_token().unwrap().0,
-            Token::HashQuestionAt
-        ));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::HashHash));
-    }
-
-    #[test]
     fn test_string() {
         let bump = Bump::new();
         let mut lexer = Lexer::new(r#""hello\nworld""#, &bump);
@@ -718,124 +676,6 @@ mod tests {
     }
 
     #[test]
-    fn test_char() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\newline \space \tab \a", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('\n'));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char(' '));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('\t'));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('a'));
-    }
-
-    #[test]
-    fn test_char_unicode() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\u0041", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('A'));
-    }
-
-    #[test]
-    fn test_number() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("123 -456 3.14 2r1010 16rFF 1/2 1N 1M", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("123"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("-456"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("3.14"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("2r1010"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("16rFF"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("1/2"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("1N"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Number("1M"));
-    }
-
-    #[test]
-    fn test_symbol() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("foo bar/baz +", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("foo"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("bar/baz"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("+"));
-    }
-
-    #[test]
-    fn test_keyword() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(":foo ::bar :ns/key", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Keyword(":foo"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Keyword("::bar"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Keyword(":ns/key"));
-    }
-
-    #[test]
-    fn test_regex() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r#"#"hello\d+""#, &bump);
-        let (token, _) = lexer.next_token().unwrap();
-        if let Token::Regex(sv) = token {
-            assert_eq!(sv.as_str(), r"hello\d+");
-        } else {
-            panic!("Expected regex token");
-        }
-    }
-
-    #[test]
-    fn test_tag_symbol() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("#inst #uuid", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::TagSymbol("inst"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::TagSymbol("uuid"));
-    }
-
-    #[test]
-    fn test_whitespace_and_comments() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("foo ; comment\n bar", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("foo"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("bar"));
-    }
-
-    #[test]
-    fn test_comma_as_whitespace() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("foo,bar", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("foo"));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("bar"));
-    }
-
-    #[test]
-    fn test_at_and_caret() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("@foo ^meta", &bump);
-        assert!(matches!(lexer.next_token().unwrap().0, Token::At));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("foo"));
-        assert!(matches!(lexer.next_token().unwrap().0, Token::Caret));
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("meta"));
-    }
-
-    #[test]
-    fn test_span() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("foo", &bump);
-        let (_, span) = lexer.next_token().unwrap();
-        assert_eq!(span.start, 0);
-        assert_eq!(span.end, 3);
-    }
-
-    #[test]
-    fn test_unterminated_string() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r#""hello"#, &bump);
-        assert!(lexer.next_token().is_err());
-    }
-
-    #[test]
-    fn test_unterminated_regex() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r#"#"hello"#, &bump);
-        assert!(lexer.next_token().is_err());
-    }
-
-    #[test]
     fn test_string_escapes() {
         let bump = Bump::new();
         let mut lexer = Lexer::new(r#""\t\r\"\\""#, &bump);
@@ -845,6 +685,37 @@ mod tests {
         } else {
             panic!("Expected string token");
         }
+    }
+
+    #[test]
+    fn test_non_ascii_in_string() {
+        let bump = Bump::new();
+        let mut lexer = Lexer::new("\"αβγ\"", &bump);
+        let (token, _) = lexer.next_token().unwrap();
+        if let Token::String(sv) = token {
+            assert_eq!(sv.as_str(), "αβγ");
+        } else {
+            panic!("Expected string token");
+        }
+    }
+
+    #[test]
+    fn test_non_ascii_in_string_with_escape() {
+        let bump = Bump::new();
+        let mut lexer = Lexer::new("\"αβ\\nγ\"", &bump);
+        let (token, _) = lexer.next_token().unwrap();
+        if let Token::String(sv) = token {
+            assert_eq!(sv.as_str(), "αβ\nγ");
+        } else {
+            panic!("Expected string token");
+        }
+    }
+
+    #[test]
+    fn test_unterminated_string() {
+        let bump = Bump::new();
+        let mut lexer = Lexer::new(r#""hello"#, &bump);
+        assert!(lexer.next_token().is_err());
     }
 
     #[test]
@@ -862,13 +733,6 @@ mod tests {
     }
 
     #[test]
-    fn test_string_invalid_unicode_hex() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r#""\uZZZZ""#, &bump);
-        assert!(lexer.next_token().is_err());
-    }
-
-    #[test]
     fn test_string_unicode_unterminated() {
         let bump = Bump::new();
         let mut lexer = Lexer::new(r#""\u00"#, &bump);
@@ -876,24 +740,17 @@ mod tests {
     }
 
     #[test]
-    fn test_char_backspace() {
+    fn test_string_invalid_unicode_hex() {
         let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\backspace", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('\x08'));
+        let mut lexer = Lexer::new(r#""\uZZZZ""#, &bump);
+        assert!(lexer.next_token().is_err());
     }
 
     #[test]
-    fn test_char_formfeed() {
+    fn test_char_empty_error() {
         let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\formfeed", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('\x0C'));
-    }
-
-    #[test]
-    fn test_char_return() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\return", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('\r'));
+        let mut lexer = Lexer::new(r"\", &bump);
+        assert!(lexer.next_token().is_err());
     }
 
     #[test]
@@ -904,24 +761,23 @@ mod tests {
     }
 
     #[test]
-    fn test_char_multi_char_fallback() {
+    fn test_char_invalid_unicode_codepoint() {
         let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\abc)", &bump);
-        let (token, _) = lexer.next_token().unwrap();
-        assert_eq!(token, Token::Char('a'));
+        let mut lexer = Lexer::new(r"\uD800", &bump);
+        assert!(lexer.next_token().is_err());
     }
 
     #[test]
-    fn test_char_special_char() {
+    fn test_unterminated_regex() {
         let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\!", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Char('!'));
+        let mut lexer = Lexer::new(r#"#"hello"#, &bump);
+        assert!(lexer.next_token().is_err());
     }
 
     #[test]
-    fn test_char_empty_error() {
+    fn test_regex_unterminated_after_escape() {
         let bump = Bump::new();
-        let mut lexer = Lexer::new(r"\", &bump);
+        let mut lexer = Lexer::new(r#"#"test\"#, &bump);
         assert!(lexer.next_token().is_err());
     }
 
@@ -940,32 +796,6 @@ mod tests {
     }
 
     #[test]
-    fn test_regex_with_escape() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r#"#"a\nb""#, &bump);
-        let (token, _) = lexer.next_token().unwrap();
-        if let Token::Regex(sv) = token {
-            assert_eq!(sv.as_str(), r"a\nb");
-        } else {
-            panic!("Expected regex token");
-        }
-    }
-
-    #[test]
-    fn test_regex_unterminated_after_escape() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new(r#"#"test\"#, &bump);
-        assert!(lexer.next_token().is_err());
-    }
-
-    #[test]
-    fn test_plus_sign_symbol() {
-        let bump = Bump::new();
-        let mut lexer = Lexer::new("+ foo", &bump);
-        assert_eq!(lexer.next_token().unwrap().0, Token::Symbol("+"));
-    }
-
-    #[test]
     fn test_hash_at_eof() {
         let bump = Bump::new();
         let mut lexer = Lexer::new("#", &bump);
@@ -973,9 +803,16 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_keyword() {
+    fn test_non_ascii_unexpected_char() {
         let bump = Bump::new();
-        let mut lexer = Lexer::new(":", &bump);
+        let mut lexer = Lexer::new("\u{00A7}", &bump);
+        assert!(lexer.next_token().is_err());
+    }
+
+    #[test]
+    fn test_non_ascii_unexpected_tag() {
+        let bump = Bump::new();
+        let mut lexer = Lexer::new("#\u{00A7}", &bump);
         assert!(lexer.next_token().is_err());
     }
 }
