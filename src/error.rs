@@ -86,6 +86,41 @@ impl std::error::Error for ParseError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ExpandErrorKind {
+    #[error("unquote-splice (~@) not valid outside of list context")]
+    UnquoteSpliceNotInList,
+    #[error("unquote (~) not valid outside of syntax-quote")]
+    UnquoteOutsideSyntaxQuote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpandError {
+    pub kind: ExpandErrorKind,
+    pub span: Option<crate::span::Span>,
+}
+
+impl ExpandError {
+    pub fn new(kind: ExpandErrorKind) -> Self {
+        Self { kind, span: None }
+    }
+
+    pub fn with_span(kind: ExpandErrorKind, span: crate::span::Span) -> Self {
+        Self { kind, span: Some(span) }
+    }
+}
+
+impl std::fmt::Display for ExpandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.span {
+            Some(span) => write!(f, "{} at {}..{}", self.kind, span.start, span.end),
+            None => write!(f, "{}", self.kind),
+        }
+    }
+}
+
+impl std::error::Error for ExpandError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

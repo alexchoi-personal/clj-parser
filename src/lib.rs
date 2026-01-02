@@ -2,15 +2,19 @@
 
 mod ast;
 mod error;
+mod expander;
 mod lexer;
 mod parser;
+mod printer;
 mod span;
 
 pub use ast::{Form, ParseOpts, Platform, ReadCondBehavior, StringValue, SymbolicVal};
 pub use bumpalo::Bump;
-pub use error::{ErrorKind, ParseError};
+pub use error::{ErrorKind, ExpandError, ExpandErrorKind, ParseError};
+pub use expander::Expander;
 pub use lexer::{Lexer, Token};
 pub use parser::Parser;
+pub use printer::{print_form, print_forms};
 pub use span::{Span, Spanned};
 
 impl Default for ParseOpts {

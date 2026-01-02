@@ -13,6 +13,7 @@ categories = ["parsing", "development-tools"]
 thiserror = "2"
 bumpalo = { version = "3", features = ["collections"] }
 memchr = "2"
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "fs", "sync", "macros"], optional = true }
 futures = { version = "0.3", optional = true }
 
@@ -28,6 +29,10 @@ futures = "0.3"
 [[bench]]
 name = "parse_bench"
 harness = false
+
+[[bin]]
+name = "clj-expand"
+path = "src/bin/clj-expand.rs"
 
 [lints.rust]
 unsafe_code = "forbid"

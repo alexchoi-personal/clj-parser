@@ -8,6 +8,8 @@ A high-performance Clojure/ClojureScript parser written in Rust.
 - **Arena allocation** - All AST nodes allocated in a bump allocator for cache-friendly access
 - **SIMD-accelerated lexing** - Uses `memchr` for fast string and delimiter scanning
 - **Full Clojure syntax support** - Lists, vectors, maps, sets, reader macros, metadata, reader conditionals
+- **Syntax-quote expansion** - Expand `` ` ~ ~@ `` into explicit `list/concat/quote` forms
+- **CLI tool** - `clj-expand` binary for preprocessing Clojure files
 - **Async parallel parsing** - Optional tokio-based concurrent file parsing
 
 ## Installation
@@ -52,6 +54,49 @@ fn main() {
 
     let forms = parse_with_opts(source, opts, &bump).unwrap();
 }
+```
+
+### Syntax-Quote Expansion
+
+Expand Clojure's syntax-quote (`` ` ``), unquote (`~`), and unquote-splice (`~@`) into explicit forms:
+
+```rust
+use clojure_parser::{parse, Bump, Expander, print_forms};
+
+fn main() {
+    let source = "`(defn ~name [~@args] body)";
+
+    let bump = Bump::new();
+    let forms = parse(source, &bump).unwrap();
+
+    let mut expander = Expander::new(&bump);
+    let expanded: Vec<_> = forms.iter()
+        .map(|f| expander.expand(&f.value).unwrap())
+        .collect();
+
+    println!("{}", print_forms(expanded.iter()));
+    // Output: (seq (concat (list (quote defn)) (list name) (list (apply vector (concat args))) (list (quote body))))
+}
+```
+
+**Transformation rules:**
+- `` `foo `` → `(quote foo)`
+- `` `(a ~b ~@c) `` → `(seq (concat (list (quote a)) (list b) c))`
+- `` `[a ~b] `` → `(apply vector (concat (list (quote a)) (list b)))`
+- `foo#` → `foo__N__auto__` (gensym)
+
+### CLI Tool
+
+The `clj-expand` binary expands syntax-quote forms in Clojure files:
+
+```bash
+# Install
+cargo install --path .
+
+# Usage
+clj-expand input.clj                 # Read file, print to stdout
+clj-expand input.clj -o output.clj   # Read file, write to file
+cat input.clj | clj-expand           # Read stdin, print to stdout
 ```
 
 ### Async Parallel Parsing
