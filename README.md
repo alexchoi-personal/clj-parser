@@ -142,6 +142,8 @@ Benchmarked on parsing Clojure source files:
 Throughput: ~125 MB/s
 ```
 
+### Parsing
+
 | Benchmark | Time |
 |-----------|------|
 | Simple forms | 1.2 µs |
@@ -149,6 +151,33 @@ Throughput: ~125 MB/s
 | Nested structures | 1.5 µs |
 | 1000 symbols | 45 µs |
 | 1000 symbols (reused bump) | 28 µs |
+
+### Expansion & Printing
+
+| Benchmark | Time |
+|-----------|------|
+| Expand simple syntax-quote | 1.2 µs |
+| Expand complex syntax-quote | 2.3 µs |
+| Print simple form | 300 ns |
+| Print complex form | 900 ns |
+
+## Testing
+
+```bash
+cargo nextest run           # Run all tests
+cargo llvm-cov nextest      # Run with coverage
+cargo bench                 # Run benchmarks
+```
+
+| Test Suite | Tests | Description |
+|------------|-------|-------------|
+| Unit tests | 130 | Error paths, gensyms, reader conditionals |
+| `roundtrip_tests.rs` | 86 | Parse → print roundtrip verification |
+| `clj_expand_tests.rs` | 30 | CLI integration tests |
+
+Tested on 191 real-world Clojure files from:
+- [clojure/clojure](https://github.com/clojure/clojure) (141 files)
+- [clojure/core.async](https://github.com/clojure/core.async) (50 files)
 
 ## Architecture
 
@@ -169,7 +198,29 @@ Source Text (&str)
        │
        ▼
 Vec<Spanned<Form>>  Zero-copy AST with source spans
+       │
+       ├──────────────────┐
+       ▼                  ▼
+┌─────────────┐    ┌─────────────┐
+│  Expander   │    │   Printer   │
+│  (gensym)   │    │  (display)  │
+└─────────────┘    └─────────────┘
+       │                  │
+       ▼                  ▼
+  Form<'a>            String
 ```
+
+### Modules
+
+| Module | Lines | Description |
+|--------|-------|-------------|
+| `lexer.rs` | 818 | SIMD-accelerated tokenizer using memchr |
+| `parser.rs` | 1625 | Recursive descent parser with arena allocation |
+| `expander.rs` | 1183 | Syntax-quote expansion with gensym support |
+| `printer.rs` | 220 | AST to Clojure source string conversion |
+| `ast.rs` | 106 | Form enum and supporting types |
+| `span.rs` | 106 | Source location tracking |
+| `error.rs` | 152 | Error types for parse and expand errors |
 
 ## AST Types
 
